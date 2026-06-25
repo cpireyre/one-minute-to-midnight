@@ -5,8 +5,7 @@ grabbing power-ups before the clock runs out. Built solo in ~12 hours for a
 timed coding challenge (theme: "Endless Runner").
 
 > The game-state framework and resource manager were provided as starter code.
-> Everything in the gameplay layer — movement, collision, power-ups, the
-> day/night cycle and the win condition — is my own work.
+> Everything in the gameplay layer is my own work.
 
 ![Gameplay](assets/demo.gif)
 
