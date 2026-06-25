@@ -7,7 +7,9 @@ timed coding challenge (theme: "Endless Runner").
 > The game-state framework and resource manager were provided as starter code.
 > Everything in the gameplay layer is my own work.
 
-![Gameplay](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="Gameplay" width="640">
+</p>
 
 ## How to play
 - **Space** — jump. Hold Space as you land on an enemy's head to bounce higher.
