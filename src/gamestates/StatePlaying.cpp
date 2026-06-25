@@ -3,11 +3,50 @@
 #include "StatePaused.h"
 #include "StateStack.h"
 #include "ResourceManager.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
-#include <iostream>
 #include <SFML/Graphics/RenderTarget.hpp>
 
-static uint32_t roll(int n);
+namespace
+{
+    uint32_t roll(uint32_t n) { return rand() % n; }
+
+    // Shortest distance from point c to the axis-aligned box `bounds`.
+    // Ref: https://www.jeffreythompson.org/collision-detection/circle-rect.php
+    float pointToBoxDistance(sf::Vector2f c, const sf::FloatRect& bounds)
+    {
+        const sf::Vector2f min = bounds.position;
+        const sf::Vector2f max = bounds.position + bounds.size;
+        const float nearestX = std::clamp(c.x, min.x, max.x);
+        const float nearestY = std::clamp(c.y, min.y, max.y);
+        return std::hypot(c.x - nearestX, c.y - nearestY);
+    }
+
+    void scrollTextLeft(sf::Text* text, float dt)
+    {
+        const sf::Vector2f pos = text->getPosition();
+        text->setPosition({pos.x - 400 * dt, pos.y});
+    }
+
+    constexpr float playerEnemyHitbox = 20.0f;
+    constexpr float playerPowerupHitbox = 25.0f;
+    constexpr float stompBounceVelocity = 600.0f;
+    constexpr float boostDuration = 5.0f;
+
+    // Sky texture index + ground colour applied as each in-game hour is reached.
+    struct TimeOfDay { int hour; int skyTexture; uint32_t groundColor; };
+    constexpr std::array<TimeOfDay, 4> dayNightSchedule = {{
+        {16, 1, 0x795D4EFF}, // sunset
+        {18, 2, 0x453D3FFF}, // dusk
+        {20, 3, 0x2E343AFF}, // evening
+        {22, 4, 0x141C1AFF}, // night
+    }};
+}
 
 StatePlaying::StatePlaying(StateStack& stateStack)
     : m_stateStack(stateStack)
@@ -16,33 +55,23 @@ StatePlaying::StatePlaying(StateStack& stateStack)
 
 bool StatePlaying::init()
 {
-    m_skyTextures[0] = ResourceManager::getOrLoadTexture("1.jpg"); // daylight
-    if (m_skyTextures[0] == nullptr)
-        return false;
-    m_skyTextures[1] = ResourceManager::getOrLoadTexture("4.jpg"); // sunset
-    if (m_skyTextures[1] == nullptr)
-        return false;
-    m_skyTextures[2] = ResourceManager::getOrLoadTexture("5.jpg"); // sunset2
-    if (m_skyTextures[2] == nullptr)
-        return false;
-    m_skyTextures[3] = ResourceManager::getOrLoadTexture("2.jpg"); // evening
-    if (m_skyTextures[3] == nullptr)
-        return false;
-    m_skyTextures[4] = ResourceManager::getOrLoadTexture("3.jpg"); // nighttime
-    if (m_skyTextures[4] == nullptr)
-        return false;
-    m_pSprite = std::make_unique<sf::Sprite>(*m_skyTextures[0]);
-    if (!m_pSprite)
-        return false;
+    // Skies from midday through to midnight, swapped in by the day/night schedule.
+    const char* skyFiles[5] = {"1.jpg", "4.jpg", "5.jpg", "2.jpg", "3.jpg"};
+    for (int i = 0; i < 5; ++i)
+    {
+        m_skyTextures[i] = ResourceManager::getOrLoadTexture(skyFiles[i]);
+        if (m_skyTextures[i] == nullptr)
+            return false;
+    }
+    m_pSky = std::make_unique<sf::Sprite>(*m_skyTextures[0]);
+
     m_ground.setSize({1024.0f, 1024.0f - ZERO_Y});
     m_ground.setPosition({0.0f, ZERO_Y});
     m_ground.setFillColor(sf::Color(0x5C794EFF));
 
-
     m_pPlayer = std::make_unique<Player>();
-    if (!m_pPlayer || !m_pPlayer->init())
+    if (!m_pPlayer->init())
         return false;
-
     m_pPlayer->setPosition(sf::Vector2f(ZERO_X, ZERO_Y));
 
     const sf::Font* pFont = ResourceManager::getOrLoadFont("Lavigne.ttf");
@@ -50,17 +79,9 @@ bool StatePlaying::init()
         return false;
 
     m_clockText = std::make_unique<sf::Text>(*pFont);
-    if (!m_clockText)
-        return false;
     m_helpText = std::make_unique<sf::Text>(*pFont);
-    if (!m_helpText)
-        return false;
     m_controlText = std::make_unique<sf::Text>(*pFont);
-    if (!m_controlText)
-        return false;
     m_powerupText = std::make_unique<sf::Text>(*pFont);
-    if (!m_powerupText)
-        return false;
 
     m_clockText->setString("12:00");
     m_clockText->setCharacterSize(90);
@@ -89,80 +110,69 @@ bool StatePlaying::init()
     return true;
 }
 
-void    moveText(sf::Text *p, float dt) {
-    float currentX = p->getPosition().x;
-    float currentY = p->getPosition().y;
-    p->setPosition({currentX - 400 * dt, currentY});
-}
-
-#include <iostream>
 void StatePlaying::update(float dt)
 {
-    char buffer[100];
-    elapsedTime += dt * (10 + 2 * boostTimer);
-    int score = elapsedTime;
-    const int hour = 12 + score / 60, minute = score % 60;
-    snprintf(buffer, sizeof(buffer), "%02d:%02d",
-            hour,
-            minute
-            );
+    // Advance the in-game clock (runs ~10x real time, faster while boosted).
+    m_elapsedSeconds += dt * (10 + 2 * m_boostTimer);
+    const int totalMinutes = static_cast<int>(m_elapsedSeconds);
+    const int hour = 12 + totalMinutes / 60;
+    const int minute = totalMinutes % 60;
+
+    char buffer[16];
+    snprintf(buffer, sizeof(buffer), "%02d:%02d", hour, minute);
     m_clockText->setString(buffer);
+
     if (hour >= 24)
+    {
         m_stateStack.push<StateWinScreen>();
+        return;
+    }
 
-    if (hour >= 16 && timeOfDayIota == 0) {
-        timeOfDayIota++;
-        m_pSprite->setTexture(*m_skyTextures[timeOfDayIota]);
-        m_ground.setFillColor(sf::Color(0x795D4EFF));
+    // Roll the sky and ground through dusk into night as the hours pass.
+    while (m_timeOfDayIndex < static_cast<int>(dayNightSchedule.size())
+           && hour >= dayNightSchedule[m_timeOfDayIndex].hour)
+    {
+        const TimeOfDay& tod = dayNightSchedule[m_timeOfDayIndex];
+        m_pSky->setTexture(*m_skyTextures[tod.skyTexture]);
+        m_ground.setFillColor(sf::Color(tod.groundColor));
+        ++m_timeOfDayIndex;
     }
-    if (hour >= 18 && timeOfDayIota == 1) {
-        timeOfDayIota++;
-        m_pSprite->setTexture(*m_skyTextures[timeOfDayIota]);
-        m_ground.setFillColor(sf::Color(0x453D3FFF));
+
+    // Scroll the on-screen tutorial off to the left once the intro is over.
+    if (m_elapsedSeconds > 10)
+    {
+        scrollTextLeft(m_helpText.get(), dt);
+        scrollTextLeft(m_controlText.get(), dt);
+        scrollTextLeft(m_powerupText.get(), dt);
     }
-    if (hour >= 20 && timeOfDayIota == 2) {
-        timeOfDayIota++;
-        m_pSprite->setTexture(*m_skyTextures[timeOfDayIota]);
-        m_ground.setFillColor(sf::Color(0x2E343AFF));
-    }
-    if (hour >= 22 && timeOfDayIota == 3) {
-        timeOfDayIota++;
-        m_pSprite->setTexture(*m_skyTextures[timeOfDayIota]);
-        m_ground.setFillColor(sf::Color(0x141C1AFF));
-    }
-    if (elapsedTime > 10) {
-        moveText(m_helpText.get(), dt);
-        moveText(m_controlText.get(), dt);
-        moveText(m_powerupText.get(), dt);
-    }
+
+    // Spawn enemies on a randomised cadence (tighter while boosted).
     m_timeUntilEnemySpawn -= dt;
-    constexpr uint32_t size = 4;
-    constexpr float intervals[size] = {0.f, -.5f, 1.f, .25f};
-
     if (m_timeUntilEnemySpawn < 0.0f)
     {
-        m_timeUntilEnemySpawn = enemySpawnInterval + intervals[roll(size)];
-        if (boostEntitySpeed) m_timeUntilEnemySpawn /= 2;
-        std::unique_ptr<Enemy> pEnemy = std::make_unique<Enemy>();
+        constexpr float intervals[4] = {0.f, -.5f, 1.f, .25f};
+        m_timeUntilEnemySpawn = enemySpawnInterval + intervals[roll(4)];
+        if (m_boostActive)
+            m_timeUntilEnemySpawn /= 2;
+
+        auto pEnemy = std::make_unique<Enemy>();
         pEnemy->setPosition(sf::Vector2f(1000, ZERO_Y));
         if (pEnemy->init())
             m_enemies.push_back(std::move(pEnemy));
     }
 
-    constexpr float powerupIntervalOffset[size] = {0.f, -.0f, 0.f, .0};
     m_timeUntilPowerupSpawn -= dt;
     if (m_timeUntilPowerupSpawn < 0.0f)
     {
-        m_timeUntilPowerupSpawn = powerupSpawnInterval + powerupIntervalOffset[roll(size)];
-        std::unique_ptr<Powerup> pPowerup = std::make_unique<Powerup>();
+        m_timeUntilPowerupSpawn = powerupSpawnInterval;
+        auto pPowerup = std::make_unique<Powerup>();
         pPowerup->setPosition(sf::Vector2f(1000, ZERO_Y));
         if (pPowerup->init())
-        {
             m_powerups.push_back(std::move(pPowerup));
-        }
     }
 
-    bool isPauseKeyPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape);
+    // Pause on a fresh Escape press, ignoring the key being held down.
+    const bool isPauseKeyPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape);
     m_hasPauseKeyBeenReleased |= !isPauseKeyPressed;
     if (m_hasPauseKeyBeenReleased && isPauseKeyPressed)
     {
@@ -171,103 +181,70 @@ void StatePlaying::update(float dt)
     }
 
     m_pPlayer->update(dt);
+    for (const auto& pPowerup : m_powerups)
+        pPowerup->update(dt, m_boostActive);
+    for (const auto& pEnemy : m_enemies)
+        pEnemy->update(dt, m_boostActive);
 
-    for (const std::unique_ptr<Powerup>& pPowerup : m_powerups)
+    m_boostTimer -= dt;
+    if (m_boostTimer <= 0)
     {
-        pPowerup->update(dt, boostEntitySpeed);
-    }
-    for (const std::unique_ptr<Enemy>& pEnemy : m_enemies)
-    {
-        pEnemy->update(dt, boostEntitySpeed);
-    }
-    boostTimer -= dt;
-    if (boostTimer <= 0) {
-        boostEntitySpeed = false;
-        boostTimer = 0;
+        m_boostActive = false;
+        m_boostTimer = 0;
     }
 
-    // Detect collisions
-    // Ref: https://www.jeffreythompson.org/collision-detection/circle-rect.php
+    const sf::Vector2f playerPos = m_pPlayer->getPosition();
+
+    // Stomping an enemy from above pops it and bounces the player (higher if Space
+    // is held); any other contact is fatal unless a boost is shielding the player.
     bool playerDied = false;
-    for (const std::unique_ptr<Enemy>& pEnemy : m_enemies)
+    for (const auto& pEnemy : m_enemies)
     {
-        const sf::Vector2f c = m_pPlayer->getPosition();
-        sf::Vector2 pos = pEnemy->m_pSprite->getGlobalBounds().position;
-        sf::Vector2 size = pEnemy->m_pSprite->getGlobalBounds().size;
-        float testX = c.x;
-        float testY = c.y;
-        if (c.x < pos.x) testX = pos.x;
-        else if (c.x > pos.x + size.x) testX = pos.x + size.x;
-        if (c.y < pos.y) testY = pos.y;
-        else if (c.y > pos.y + size.y) testY = pos.y + size.y;
-        float distX = std::pow(c.x - testX, 2);
-        float distY = std::pow(c.y - testY, 2);
-        float distance = sqrt(distX + distY);
+        const sf::FloatRect bounds = pEnemy->getGlobalBounds();
+        if (pointToBoxDistance(playerPos, bounds) > playerEnemyHitbox)
+            continue;
 
-        // Should use getCollisionRadius maybe
-        float hitbox = 20;
-        if (distance <= hitbox && c.y < pos.y) {
-            pEnemy->active = false;
-            m_pPlayer->m_acceleration.y = 4000.f;
-            m_pPlayer->m_velocity.y = 600.f;
-            bool isSpaceKeyPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
-            if (isSpaceKeyPressed) {
-                constexpr float gravity = 4000.f;
-                constexpr float velocity = 1300.f;
-                m_pPlayer->m_acceleration.y = gravity;
-                m_pPlayer->m_velocity.y = velocity;
-            }
+        if (playerPos.y < bounds.position.y)
+        {
+            pEnemy->setActive(false);
+            const bool chargedJump = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+            m_pPlayer->bounce(chargedJump ? Player::jumpVelocity : stompBounceVelocity);
         }
-        else if (boostTimer <= 0 && distance <= hitbox)
+        else if (m_boostTimer <= 0)
         {
             playerDied = true;
             break;
         }
     }
 
-    for (const std::unique_ptr<Powerup>& pPowerup : m_powerups)
+    // Collecting a powerup grants a temporary speed boost and invulnerability.
+    for (const auto& pPowerup : m_powerups)
     {
-        const sf::Vector2f c = m_pPlayer->getPosition();
-        sf::Vector2 pos = pPowerup->m_pSprite->getGlobalBounds().position;
-        sf::Vector2 size = pPowerup->m_pSprite->getGlobalBounds().size;
-        float testX = c.x;
-        float testY = c.y;
-        if (c.x < pos.x) testX = pos.x;
-        else if (c.x > pos.x + size.x) testX = pos.x + size.x;
-        if (c.y < pos.y) testY = pos.y;
-        else if (c.y > pos.y + size.y) testY = pos.y + size.y;
-        float distX = std::pow(c.x - testX, 2);
-        float distY = std::pow(c.y - testY, 2);
-        float distance = sqrt(distX + distY);
-
-        // Should use getCollisionRadius or something
-        float hitbox = 25;
-        if (pPowerup->active && distance <= hitbox) {
-            pPowerup->active = false;
-            boostEntitySpeed = true;
-            boostTimer = 5;
+        if (!pPowerup->isActive())
+            continue;
+        if (pointToBoxDistance(playerPos, pPowerup->getGlobalBounds()) <= playerPowerupHitbox)
+        {
+            pPowerup->setActive(false);
+            m_boostActive = true;
+            m_boostTimer = boostDuration;
         }
     }
-    // End Playing State on player death
+
     if (playerDied)
         m_stateStack.popDeferred();
 }
 
 void StatePlaying::render(sf::RenderTarget& target) const
 {
-    target.draw(*m_pSprite);
+    target.draw(*m_pSky);
     target.draw(m_ground);
     target.draw(*m_clockText);
     target.draw(*m_helpText);
     target.draw(*m_controlText);
     target.draw(*m_powerupText);
-    for (const std::unique_ptr<Powerup>& pPowerup : m_powerups)
+    for (const auto& pPowerup : m_powerups)
         pPowerup->render(target);
-    for (const std::unique_ptr<Enemy>& pEnemy : m_enemies)
+    for (const auto& pEnemy : m_enemies)
         pEnemy->render(target);
     m_pPlayer->render(target);
-}
-
-static uint32_t roll(int n) {
-    return rand() % n;
 }

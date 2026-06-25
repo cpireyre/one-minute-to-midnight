@@ -12,7 +12,6 @@ class Powerup final : public Entity
 {
 public:
     static constexpr float collisionRadius = 24.0f;
-    bool active = true;
 
     Powerup() = default;
     virtual ~Powerup() = default;

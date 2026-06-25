@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <SFML/System/Vector2.hpp>
+#include <SFML/Graphics/Rect.hpp>
 #include <SFML/Graphics/Sprite.hpp>
 
 namespace sf { class RenderTarget; };
@@ -17,16 +18,22 @@ public:
     virtual void render(sf::RenderTarget& target) const = 0;
 
     const sf::Vector2f& getPosition() const { return m_position; }
-    void setPosition(const sf::Vector2f& position) { m_position = position; };
+    void setPosition(const sf::Vector2f& position) { m_position = position; }
 
     const sf::Angle& getRotation() const { return m_rotation; }
-    void setRotation(const sf::Angle& rotation) { m_rotation = rotation; };
+    void setRotation(const sf::Angle& rotation) { m_rotation = rotation; }
 
-    float getCollisionRadius() { return m_collisionRadius; }
+    sf::FloatRect getGlobalBounds() const { return m_pSprite->getGlobalBounds(); }
+
+    float getCollisionRadius() const { return m_collisionRadius; }
+
+    bool isActive() const { return active; }
+    void setActive(bool value) { active = value; }
 
     int getHealth() const { return m_health; }
     void setHealth(int health) { m_health = health; }
 
+protected:
     sf::Vector2f m_position;
     sf::Vector2f m_velocity;
     sf::Vector2f m_acceleration;

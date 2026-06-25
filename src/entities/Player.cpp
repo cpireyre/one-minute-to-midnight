@@ -29,22 +29,23 @@ bool Player::init()
     return true;
 }
 
-// Player starts at y = 800, up is -
+// Up is negative y; the player rests on the ground at ZERO_Y.
 void Player::update(float dt)
 {
-    constexpr float gravity = 4000.f;
-    constexpr float velocity = 1300.f;
     if (m_position.y >= ZERO_Y && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space))
-    {
-        m_acceleration.y = gravity;
-        m_velocity.y = velocity;
-    }
+        bounce(jumpVelocity);
     m_position.y -= m_velocity.y * dt;
     m_velocity.y -= m_acceleration.y * dt;
     if (m_position.y > ZERO_Y) {
         m_position.y = ZERO_Y;
         m_velocity.y = 0;
     }
+}
+
+void Player::bounce(float velocityY)
+{
+    m_acceleration.y = gravity;
+    m_velocity.y = velocityY;
 }
 
 void Player::render(sf::RenderTarget& target) const

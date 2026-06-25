@@ -11,14 +11,16 @@ namespace sf { class Sprite; }
 class Player final : public Entity
 {
 public:
-    static constexpr float collisionRadius = 42.0f;
+    static constexpr float gravity = 4000.0f;
+    static constexpr float jumpVelocity = 1300.0f;
 
     Player();
     virtual ~Player() = default;
-    
+
     bool init() override;
     void update(float dt) override;
     void render(sf::RenderTarget& target) const override;
 
-    bool m_isJumping = false;
+    // Launch the player upward, e.g. when jumping or bouncing off an enemy.
+    void bounce(float velocityY);
 };

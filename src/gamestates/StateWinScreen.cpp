@@ -1,5 +1,4 @@
 #include "StateWinScreen.h"
-#include "StatePlaying.h"
 #include "StateStack.h"
 #include "ResourceManager.h"
 #include <SFML/Graphics/RenderTarget.hpp>
@@ -42,14 +41,7 @@ bool StateWinScreen::init()
 void StateWinScreen::update(float dt)
 {
     (void)dt;
-    // m_hasStartKeyBeenPressed |= sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter);
-    // if (m_hasStartKeyBeenReleased)
-    // {
-    //     m_hasStartKeyBeenPressed = false;
-    //     m_hasStartKeyBeenReleased = false;
-    //     m_stateStack.push<StatePlaying>();
-    // }
-    // m_hasStartKeyBeenReleased |= m_hasStartKeyBeenPressed && !sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter);
+    // Terminal state: the player has won, so there is nothing left to update.
 }
 
 void StateWinScreen::render(sf::RenderTarget& target) const
